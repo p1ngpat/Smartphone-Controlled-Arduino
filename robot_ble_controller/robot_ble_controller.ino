@@ -4,8 +4,8 @@
 BLEService robotService("12345678-1234-5678-1234-56789abcdef0");
 
 BLEByteCharacteristic movementCharacteristic(
-  "12345678-1234-5678-1234-56789abcdef1",
-  BLEWrite
+        "12345678-1234-5678-1234-56789abcdef1",
+        BLEWrite
 );
 
 void setup() {
