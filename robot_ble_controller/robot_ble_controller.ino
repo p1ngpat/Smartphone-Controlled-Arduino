@@ -1,5 +1,6 @@
 #include <ArduinoBLE.h>
 
+
 BLEService robotService("12345678-1234-5678-1234-56789abcdef0");
 
 BLEByteCharacteristic movementCharacteristic(
@@ -9,17 +10,26 @@ BLEByteCharacteristic movementCharacteristic(
 
 void setup() {
   Serial.begin(9600);
+  while (!Serial);
+
+  Serial.println("Starting setup...");
+
+  Serial.println("Calling BLE.begin()...");
 
   if (!BLE.begin()) {
-    Serial.println("Starting BLE failed!");
+    Serial.println("BLE.begin() FAILED");
     while (1);
   }
+
+  Serial.println("BLE.begin() succeeded");
 
   BLE.setLocalName("RobotController");
   BLE.setAdvertisedService(robotService);
 
   robotService.addCharacteristic(movementCharacteristic);
   BLE.addService(robotService);
+
+  Serial.println("Starting advertising...");
 
   BLE.advertise();
 
@@ -30,8 +40,10 @@ void loop() {
   BLEDevice central = BLE.central();
 
   if (central) {
-    while (central.connected()) {
+    Serial.print("Connected to: ");
+    Serial.println(central.address());
 
+    while (central.connected()) {
       if (movementCharacteristic.written()) {
         char command = movementCharacteristic.value();
 
@@ -55,5 +67,7 @@ void loop() {
         }
       }
     }
+
+    Serial.println("BLE disconnected");
   }
 }
