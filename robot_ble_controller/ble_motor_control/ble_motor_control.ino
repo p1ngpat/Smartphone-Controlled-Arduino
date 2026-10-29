@@ -11,6 +11,20 @@ BLEByteCharacteristic movementCharacteristic(
   BLEWrite
 );
 
+// Ultrasonic sensor pins 
+const int trigPin = 12;
+const int echoPin = 11; 
+
+// minimum stopping distance 
+const float stopDistance = 20.0; 
+
+// movement tracking
+char currentMovement = 'S';
+
+// Distance check interval (ms)
+const unsigned long sensorInterval = 80; 
+unsigned long lastSensorCheck = 0; 
+
 // L298N Motor Driver Pins
 const int ENA = 5;
 const int IN1 = 7;
@@ -74,6 +88,39 @@ void stopMotors() {
   Serial.println("Stop");
 }
 
+// Measure distance 
+float getDistance(){
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  unsigned long duration =
+      pulseIn(echoPin, HIGH, 25000UL);
+
+  if (duration == 0) { 
+    return -1;
+  }
+// convert echo duration to cm and divide 2 for round trip 
+  return duration * .0343 / 2.0;
+
+}
+
+// Distance check 
+bool forwardIsSafe(){
+  float distance = getDistance();
+
+  Serial.print("Distance: ");
+  Serial.print(distance);
+  Serial.println(" cm");
+
+// No echo or obstacle too close 
+  if (distance < 0 || distance <= stopDistance){
+    return false;
+  }
+  return true;
+}
+
 void setup() {
   Serial.begin(9600);
 
@@ -93,6 +140,13 @@ void setup() {
   // Set motor speed
   analogWrite(ENA, motorSpeed);
   analogWrite(ENB, motorSpeed);
+
+  // Ultrasonic sensor setup 
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+
+  digitalWrite(trigPin, LOW);
+
 
   Serial.println("Calling BLE.begin()...");
 
@@ -129,19 +183,31 @@ void loop() {
 
     // Motors remain stopped until a command arrives
     stopMotors();
+    currentMovement = 'S';
+    lastSensorCheck = millis();
+
 
     while (central.connected()) {
 
       if (movementCharacteristic.written()) {
-
+        // Process movement commands
         char command = movementCharacteristic.value();
 
         Serial.print("Received: ");
         Serial.println(command);
 
-        // Process movement commands
+        // check if distance before moving 
         if (command == 'F') {
-          moveForward();
+          if (forwardIsSafe()){
+            moveForward();
+            currentMovement = 'F';
+            lastSensorCheck = millis();
+          }
+          else{
+            stopMotors();
+            currentMovement = 'S';
+            Serial.println("Forward blocked");
+          }
         }
         else if (command == 'B') {
           moveBackward();
@@ -159,6 +225,21 @@ void loop() {
           stopMotors();
           Serial.println("Unknown command");
         }
+      }
+      // monitor forward movement f
+      if (currentMovement == 'F' && millis() - lastSensorCheck >= sensorInterval){
+        
+        lastSensorCheck = millis();
+
+        if (!forwardIsSafe()){
+          stopMotors();
+          currentMovement = 'S';
+
+          Serial.println(
+            "Obstacle - Auto stop"
+          );
+        }
+
       }
     }
 
