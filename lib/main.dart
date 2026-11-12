@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -33,6 +35,48 @@ class _RobotControllerPageState extends State<RobotControllerPage> {
 
   BluetoothDevice? connectedDevice;
   BluetoothCharacteristic? movementCharacteristic;
+  // Speech recognition
+  final stt.SpeechToText _speech = stt.SpeechToText();
+
+  bool _speechEnabled = false;
+  bool _isListening = false;
+  String _recognizedWords = '';
+
+  // Automatically stop voice-controlled movement.
+  Timer? _voiceStopTimer;
+  @override
+  void initState() {
+    super.initState();
+    _initializeSpeech();
+  }
+
+  // Initialize speech recognition on the Android device.
+  Future<void> _initializeSpeech() async {
+    _speechEnabled = await _speech.initialize(
+      onStatus: (status) {
+        if (!mounted) return;
+
+        setState(() {
+          _isListening = status == 'listening';
+        });
+      },
+      onError: (error) {
+        debugPrint('Speech error: ${error.errorMsg}');
+
+        if (mounted) {
+          setState(() {
+            _isListening = false;
+          });
+        }
+
+        _stopRobot();
+      },
+    );
+
+    if (mounted) {
+      setState(() {});
+    }
+  }
 
   //ask Android for BLE permissions
   Future<bool> requestBluetoothPermissions() async {
@@ -151,6 +195,118 @@ class _RobotControllerPageState extends State<RobotControllerPage> {
     }
   }
 
+  // Start listening for a voice command.
+  Future<void> _startListening() async {
+    if (!_speechEnabled || _isListening) return;
+
+    // Stop previous movement before accepting a new command.
+    _stopRobot();
+
+    setState(() {
+      _recognizedWords = '';
+    });
+
+    await _speech.listen(
+      onResult: (result) {
+        if (!mounted) return;
+
+        setState(() {
+          _recognizedWords = result.recognizedWords;
+        });
+
+        // Process only the final recognized phrase.
+        if (result.finalResult) {
+          _processVoiceCommand(result.recognizedWords);
+        }
+      },
+    );
+  }
+
+  // Stop listening and stop the robot.
+  Future<void> _stopListening() async {
+    await _speech.stop();
+    _stopRobot();
+
+    if (mounted) {
+      setState(() {
+        _isListening = false;
+      });
+    }
+  }
+
+  // Convert recognized speech into a movement command.
+  void _processVoiceCommand(String words) {
+    String command = words.toLowerCase().trim();
+
+    debugPrint('Recognized speech: $command');
+
+    String movement;
+
+    switch (command) {
+      case 'forward':
+      case 'go forward':
+        movement = 'F';
+        break;
+
+      case 'backward':
+      case 'back':
+      case 'go backward':
+        movement = 'B';
+        break;
+
+      case 'left':
+      case 'turn left':
+        movement = 'L';
+        break;
+
+      case 'right':
+      case 'turn right':
+        movement = 'R';
+        break;
+
+      case 'stop':
+      case 'halt':
+        movement = 'S';
+        break;
+
+      default:
+        debugPrint('Unknown voice command: $command');
+        _stopRobot();
+        return;
+    }
+
+    _sendVoiceCommand(movement);
+  }
+
+  // Send the movement command using the existing BLE function.
+  void _sendVoiceCommand(String command) {
+    _voiceStopTimer?.cancel();
+
+    sendCommand(command);
+
+    debugPrint('Voice command sent: $command');
+
+    // Automatically stop after two seconds.
+    if (command != 'S') {
+      _voiceStopTimer = Timer(const Duration(seconds: 2), _stopRobot);
+    }
+  }
+
+  // Stop robot movement.
+  void _stopRobot() {
+    _voiceStopTimer?.cancel();
+    _voiceStopTimer = null;
+
+    sendCommand('S');
+  }
+
+  @override
+  void dispose() {
+    _voiceStopTimer?.cancel();
+    _speech.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -212,12 +368,35 @@ class _RobotControllerPageState extends State<RobotControllerPage> {
             const SizedBox(height: 16),
 
             ElevatedButton(
-              onPressed: () => sendCommand('B'), // arduino B
+              onPressed: () => sendCommand('B'),
               child: const Text('Backward'),
             ),
 
-            const SizedBox(height: 40),
-            // test case for commands
+            const SizedBox(height: 24),
+
+            // Microphone button for voice control.
+            IconButton(
+              iconSize: 48,
+              icon: Icon(
+                _isListening ? Icons.mic : Icons.mic_none,
+                color: _isListening ? Colors.red : Colors.blue,
+              ),
+              onPressed: !_speechEnabled
+                  ? null
+                  : (_isListening ? _stopListening : _startListening),
+            ),
+
+            // Display microphone status.
+            Text(_isListening ? 'Listening...' : 'Tap microphone to speak'),
+
+            const SizedBox(height: 12),
+
+            // Display the recognized voice command.
+            Text('Recognized: $_recognizedWords'),
+
+            const SizedBox(height: 24),
+
+            // Display the last BLE movement command.
             Text(
               'Last Command: $lastCommand',
               style: const TextStyle(fontSize: 18),
