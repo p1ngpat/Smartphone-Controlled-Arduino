@@ -3,6 +3,7 @@ import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter/material.dart';
 import 'package:flutter_blue_plus/flutter_blue_plus.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'widgets/sensor_monitor.dart';
 
 void main() {
   runApp(const RobotControllerApp());
@@ -35,6 +36,12 @@ class _RobotControllerPageState extends State<RobotControllerPage> {
 
   BluetoothDevice? connectedDevice;
   BluetoothCharacteristic? movementCharacteristic;
+  // Ultrasonic sensor notifications
+  BluetoothCharacteristic? sensorCharacteristic;
+  StreamSubscription<List<int>>? sensorSubscription;
+
+  double rawDistance = -1;
+  double filteredDistance = -1;
   // Speech recognition
   final stt.SpeechToText _speech = stt.SpeechToText();
 
@@ -93,8 +100,39 @@ class _RobotControllerPageState extends State<RobotControllerPage> {
 
     return scanGranted && connectGranted;
   }
+  Future<void> subscribeToSensor() async {
+    if (sensorCharacteristic == null) {
+      return;
+    }
 
-  //scan for BLE device and connect to it
+    await sensorSubscription?.cancel();
+
+    sensorSubscription =
+        sensorCharacteristic!.onValueReceived.listen((value) {
+          try {
+            String data = String.fromCharCodes(value);
+            List<String> readings = data.split(',');
+
+            if (readings.length != 2) return;
+
+            double raw = double.parse(readings[0]);
+            double filtered = double.parse(readings[1]);
+
+            if (!mounted) return;
+
+            setState(() {
+              rawDistance = raw;
+              filteredDistance = filtered;
+            });
+          } catch (e) {
+            debugPrint('Sensor parsing error: $e');
+          }
+        });
+
+    await sensorCharacteristic!.setNotifyValue(true);
+  }
+
+  //BLE connection
   Future<void> scanForRobot() async {
     bool permissionGranted = await requestBluetoothPermissions();
 
@@ -130,20 +168,40 @@ class _RobotControllerPageState extends State<RobotControllerPage> {
             List<BluetoothService> services = await connectedDevice!
                 .discoverServices();
 
-            // Find robot service and movement characteristic
+            // Find robot service and BLE characteristics
             for (BluetoothService service in services) {
               if (service.uuid.toString().toLowerCase() ==
                   '12345678-1234-5678-1234-56789abcdef0') {
+
                 for (BluetoothCharacteristic characteristic
-                    in service.characteristics) {
+                in service.characteristics) {
+
+                  // Find movement characteristic
                   if (characteristic.uuid.toString().toLowerCase() ==
                       '12345678-1234-5678-1234-56789abcdef1') {
+
                     movementCharacteristic = characteristic;
 
                     debugPrint('Movement characteristic found');
                   }
+
+                  // Find ultrasonic sensor characteristic
+                  if (characteristic.uuid.toString().toLowerCase() ==
+                      '12345678-1234-5678-1234-56789abcdef2') {
+
+                    sensorCharacteristic = characteristic;
+
+                    debugPrint('Sensor characteristic found');
+                  }
                 }
               }
+            }
+
+            // Subscribe to ultrasonic sensor notifications
+            if (sensorCharacteristic != null) {
+              await subscribeToSensor();
+            } else {
+              debugPrint('Sensor characteristic not found');
             }
 
             // Update connection status
@@ -400,6 +458,11 @@ class _RobotControllerPageState extends State<RobotControllerPage> {
             Text(
               'Last Command: $lastCommand',
               style: const TextStyle(fontSize: 18),
+            ),const SizedBox(height: 20),
+
+            SensorMonitor(
+              rawDistance: rawDistance,
+              filteredDistance: filteredDistance,
             ),
           ],
         ),
